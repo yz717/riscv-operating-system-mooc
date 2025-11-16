@@ -63,6 +63,7 @@
 #define LSR_RX_READY (1 << 0)
 #define LSR_TX_IDLE  (1 << 5)
 
+
 #define MCR_OUT2      (1 << 3)
 
 #define IER_RX_INT_ENABLE (1 << 0)
@@ -167,11 +168,8 @@ void uart_init()
 	lcr = 0;
 	uart_write_reg(LCR, lcr | (3 << 0));
 
-    /* Route UART interrupts to the PLIC by asserting OUT2 in MCR. */
-    uart_write_reg(MCR, MCR_OUT2);
-
-    /* initialize TX buffer state */
-    tx_head = tx_tail = 0;
+        /* initialize TX buffer state */
+        tx_head = tx_tail = 0;
 }
 
 int uart_putc(char ch)
