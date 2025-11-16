@@ -63,6 +63,9 @@
 #define LSR_RX_READY (1 << 0)
 #define LSR_TX_IDLE  (1 << 5)
 
+
+#define MCR_OUT2      (1 << 3)
+
 #define IER_RX_INT_ENABLE (1 << 0)
 #define IER_TX_INT_ENABLE (1 << 1)
 
