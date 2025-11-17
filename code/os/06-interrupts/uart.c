@@ -63,13 +63,84 @@
 #define LSR_RX_READY (1 << 0)
 #define LSR_TX_IDLE  (1 << 5)
 
+#define MCR_OUT2      (1 << 3)
+
+#define IER_RX_INT_ENABLE (1 << 0)
+#define IER_TX_INT_ENABLE (1 << 1)
+
 #define uart_read_reg(reg) (*(UART_REG(reg)))
 #define uart_write_reg(reg, v) (*(UART_REG(reg)) = (v))
 
+/*
+ * Simple TX ring buffer for interrupt driven transmission.
+ */
+#define UART_TX_BUF_SIZE 128
+static char tx_buf[UART_TX_BUF_SIZE];
+static volatile uint32_t tx_head;
+static volatile uint32_t tx_tail;
+static volatile uint32_t tx_irq_count;
+
+static inline int tx_buf_empty(void)
+{
+        return tx_head == tx_tail;
+}
+
+static inline int tx_buf_full(void)
+{
+        return ((tx_head + 1) % UART_TX_BUF_SIZE) == tx_tail;
+}
+
+/*
+ * 发送侧需要和 UART 中断共享发送缓冲区，为了避免竞争，
+ * 这里提供了一对在临界区关闭/恢复 MIE 的帮助函数。
+ */
+static inline reg_t uart_intr_save(void)
+{
+        reg_t mstatus = r_mstatus();
+        w_mstatus(mstatus & ~MSTATUS_MIE);
+        return mstatus;
+}
+
+static inline void uart_intr_restore(reg_t mstatus)
+{
+        w_mstatus(mstatus);
+}
+
+/*
+ * 根据 ring buffer 是否还有待发送字节来决定是否打开 TX 中断。
+ * 只要缓冲区非空，就保持使能，这样当 THR 变为空时硬件就会产生中断，
+ * ISR 得以继续搬运后续数据。
+ */
+static void uart_update_tx_irq_locked(void)
+{
+        uint8_t ier = uart_read_reg(IER);
+        if (!tx_buf_empty()) {
+                uart_write_reg(IER, ier | IER_TX_INT_ENABLE);
+        } else {
+                uart_write_reg(IER, ier & ~IER_TX_INT_ENABLE);
+        }
+}
+
+/*
+ * 每次进入中断只发送一个字符，这样可以保证“一个字符一次 trap”。
+ */
+static void uart_send_one_locked(void)
+{
+        if (tx_buf_empty())
+                return;
+
+        if ((uart_read_reg(LSR) & LSR_TX_IDLE) == 0)
+                return;
+
+        char ch = tx_buf[tx_tail];
+        tx_tail = (tx_tail + 1) % UART_TX_BUF_SIZE;
+        uart_write_reg(THR, ch);
+}
+
 void uart_init()
 {
-	/* disable interrupts. */
-	uart_write_reg(IER, 0x00);
+        /* disable interrupts. */
+        uart_write_reg(IER, 0x00);
 
 	/*
 	 * Setting baud rate. Just a demo here if we care about the divisor,
@@ -103,39 +174,60 @@ void uart_init()
 	lcr = 0;
 	uart_write_reg(LCR, lcr | (3 << 0));
 
-	/*
-	 * enable receive interrupts.
-	 */
-	uint8_t ier = uart_read_reg(IER);
-	uart_write_reg(IER, ier | (1 << 0));
+        /* Route UART interrupts to the PLIC by asserting OUT2 in MCR. */
+        uart_write_reg(MCR, MCR_OUT2);
+
+        /* initialize TX buffer state */
+        tx_head = tx_tail = 0;
+        tx_irq_count = 0;
 }
 
 int uart_putc(char ch)
 {
-	while ((uart_read_reg(LSR) & LSR_TX_IDLE) == 0);
-	return uart_write_reg(THR, ch);
+        while (1) {
+                reg_t mstatus = uart_intr_save();
+                if (!tx_buf_full()) {
+                        tx_buf[tx_head] = ch;
+                        tx_head = (tx_head + 1) % UART_TX_BUF_SIZE;
+                        uart_update_tx_irq_locked();
+                        uart_intr_restore(mstatus);
+                        return (int)ch;
+                }
+
+                uart_intr_restore(mstatus);
+        }
 }
 
 void uart_puts(char *s)
 {
-	while (*s) {
-		uart_putc(*s++);
-	}
+        while (*s) {
+                uart_putc(*s++);
+        }
+}
+
+int uart_rx_ready(void)
+{
+        return (uart_read_reg(LSR) & LSR_RX_READY) != 0;
 }
 
 int uart_getc(void)
 {
-	while (0 == (uart_read_reg(LSR) & LSR_RX_READY))
-		;
-	return uart_read_reg(RHR);
+        while (0 == (uart_read_reg(LSR) & LSR_RX_READY))
+                ;
+        return uart_read_reg(RHR);
 }
 
 /*
- * handle a uart interrupt, raised because input has arrived, called from trap.c.
+ * handle a uart interrupt, called from trap.c.
  */
 void uart_isr(void)
 {
-	uart_putc((char)uart_getc());
-	/* add a new line just to look better */
-	uart_putc('\n');
+        tx_irq_count++;
+        uart_send_one_locked();
+        uart_update_tx_irq_locked();
+}
+
+uint32_t uart_tx_irq_count(void)
+{
+        return tx_irq_count;
 }

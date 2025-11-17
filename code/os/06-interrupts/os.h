@@ -12,6 +12,8 @@
 extern int uart_putc(char ch);
 extern void uart_puts(char *s);
 extern int uart_getc(void);
+extern int uart_rx_ready(void);
+extern uint32_t uart_tx_irq_count(void);
 
 /* printf */
 extern int  printf(const char* s, ...);
