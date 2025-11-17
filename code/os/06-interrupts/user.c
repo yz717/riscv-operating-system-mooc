@@ -7,6 +7,8 @@ void user_task0(void)
         uart_puts("Task 0: Created!\n");
         while (1) {
                 uart_puts("Task 0: Running...\n");
+                uint32_t irq_cnt = uart_tx_irq_count();
+                printf("Task 0: UART TX IRQ count = %u\n", irq_cnt);
                 task_delay(DELAY);
                 task_yield();
         }
