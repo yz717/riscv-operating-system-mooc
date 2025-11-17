@@ -210,6 +210,11 @@ int uart_rx_ready(void)
         return (uart_read_reg(LSR) & LSR_RX_READY) != 0;
 }
 
+int uart_rx_ready(void)
+{
+        return (uart_read_reg(LSR) & LSR_RX_READY) != 0;
+}
+
 int uart_getc(void)
 {
         while (0 == (uart_read_reg(LSR) & LSR_RX_READY))
